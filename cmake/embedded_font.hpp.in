@@ -1,0 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Suleyman Poyraz
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+#pragma once
+namespace abitur::desktop::assets {
+inline constexpr unsigned char font[] = {@ABITUR_FONT_BYTES@};
+}

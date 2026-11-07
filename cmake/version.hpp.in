@@ -1,0 +1,8 @@
+// SPDX-FileCopyrightText: 2026 Suleyman Poyraz
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+#pragma once
+namespace abitur {
+inline constexpr char version[] = "@PROJECT_VERSION@";
+inline constexpr char license_id[] = "GPL-3.0-or-later";
+}

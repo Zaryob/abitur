@@ -1,0 +1,27 @@
+name: Bug report
+description: Report an incorrect finding, analysis failure, or application issue.
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: Observed and expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: Include source and build commands. Do not upload private binaries or credentials.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Abitur and LLVM versions, host OS, target architecture, compiler, and flags.
+    validations:
+      required: true
+  - type: textarea
+    id: output
+    attributes:
+      label: Relevant report or error output

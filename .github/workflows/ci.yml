@@ -1,0 +1,62 @@
+name: Build and ABI tests
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install LLVM and desktop dependencies
+        run: sudo apt-get update && sudo apt-get install -y clang-18 llvm-18-dev libglfw3-dev libgl1-mesa-dev xvfb python3-jsonschema
+      - name: Check documentation and licensing
+        run: python3 scripts/check_repository.py
+      - name: Configure C++20 + ImGui
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang-18 -DCMAKE_CXX_COMPILER=clang++-18 -DLLVM_DIR=/usr/lib/llvm-18/lib/cmake/llvm
+      - name: Build
+        run: cmake --build build --parallel 2
+      - name: ELF / DWARF integration tests
+        run: ctest --test-dir build --output-on-failure
+      - name: Generate demo ELF files
+        run: python3 examples/build_demo.py --cxx clang++-18
+      - name: ImGui window and real analysis smoke test
+        run: |
+          xvfb-run -a ./build/abitur-window-smoke
+          xvfb-run -a ./build/abitur-gui --smoke-test demo-build/old/libexample.so demo-build/new/libexample.so demo-build/consumer
+      - name: Generate example JSON and SARIF
+        shell: bash
+        run: |
+          set +e
+          ./build/abitur demo-build/old/libexample.so demo-build/new/libexample.so --consumer demo-build/consumer --format json --output build/demo-report.json
+          status=$?
+          test "$status" -eq 1 || exit 1
+          ./build/abitur demo-build/old/libexample.so demo-build/new/libexample.so --consumer demo-build/consumer --format sarif --output build/demo-report.sarif
+          status=$?
+          test "$status" -eq 1 || exit 1
+      - name: Validate JSON report contract
+        run: python3 scripts/check_repository.py --report build/demo-report.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: example-abi-reports
+          path: build/demo-report.*
+  desktop:
+    name: Shared desktop / ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install macOS GLFW
+        if: runner.os == 'macOS'
+        run: brew install glfw
+      - name: Configure shared desktop without LLVM
+        run: cmake -S . -B build-desktop -DABITUR_BUILD_ANALYZER=OFF -DCMAKE_BUILD_TYPE=Release
+      - name: Build shared window and tests
+        run: cmake --build build-desktop --config Release --parallel 2
+      - name: Test window geometry
+        run: ctest --test-dir build-desktop -C Release --output-on-failure
+      - name: Test macOS desktop window
+        if: runner.os == 'macOS'
+        run: ./build-desktop/abitur-window-smoke

@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Zaryob/abitur/blob/main/docs/report.schema.json",
+  "title": "Abitur report schema version 1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "tool", "old", "new", "scope", "decision", "decision_reason", "findings", "consumers", "limitations"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "tool": {"type": "string", "pattern": "^abitur/"},
+    "old": {"type": "string"},
+    "new": {"type": "string"},
+    "scope": {"enum": ["shared-library", "static-relink"]},
+    "decision": {"enum": ["pass", "break", "review"]},
+    "decision_reason": {"type": "string"},
+    "limitations": {"$ref": "#/$defs/strings"},
+    "findings": {"type": "array", "items": {"$ref": "#/$defs/finding"}},
+    "consumers": {"type": "array", "items": {"$ref": "#/$defs/consumer"}}
+  },
+  "$defs": {
+    "strings": {"type": "array", "items": {"type": "string"}},
+    "finding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rule_id", "severity", "symbol", "message", "evidence", "consumers"],
+      "properties": {
+        "rule_id": {"type": "string", "pattern": "^ABI00[1-7]$"},
+        "severity": {"enum": ["error", "warning", "note"]},
+        "symbol": {"type": "string"},
+        "message": {"type": "string"},
+        "evidence": {"$ref": "#/$defs/strings"},
+        "consumers": {"$ref": "#/$defs/strings"}
+      }
+    },
+    "consumer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "imported_symbols", "affected_symbols"],
+      "properties": {
+        "path": {"type": "string"},
+        "imported_symbols": {"$ref": "#/$defs/strings"},
+        "affected_symbols": {"$ref": "#/$defs/strings"}
+      }
+    }
+  }
+}
