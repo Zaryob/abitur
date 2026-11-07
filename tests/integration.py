@@ -166,6 +166,14 @@ def main():
         assert report["decision"] == "break", "unused direct imports must not waive library breaks"
         compare(old[1], same[1], 2, "--consumer", app)
         compare(old[0], same[1], 2)
+        # EI_OSABI is byte 7 of the endian-independent ELF identification.
+        # Keep target detection covered when supporting older LLVM readers.
+        osabi_changed = root / "osabi.so"
+        contents = bytearray(old[0].read_bytes())
+        contents[7] = 3 if contents[7] != 3 else 0
+        osabi_changed.write_bytes(contents)
+        report = compare(old[0], osabi_changed, 1)
+        assert any(f["rule_id"] == "ABI001" for f in report["findings"])
         bad = root / "bad.so"
         bad.write_bytes(b"\x7fELF\x00")
         compare(bad, old[0], 2)

@@ -301,10 +301,12 @@ class GraphBuilder {
 };
 
 std::string target(const ELFObjectFileBase& object) {
+    // e_ident byte fields are endian-independent. Reading this field from the
+    // validated ELF header also supports LLVM versions without getEIdentOSABI.
+    auto osabi = static_cast<unsigned char>(object.getMemoryBufferRef().getBuffer()[ELF::EI_OSABI]);
     return std::to_string(object.getEMachine()) + "/" +
            std::to_string(object.getBytesInAddress() * 8) +
-           (object.isLittleEndian() ? "/little" : "/big") +
-           "/osabi=" + std::to_string(object.getEIdentOSABI());
+           (object.isLittleEndian() ? "/little" : "/big") + "/osabi=" + std::to_string(osabi);
 }
 
 void read_object(const ObjectFile& object, Corpus& corpus) {
