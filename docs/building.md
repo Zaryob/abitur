@@ -69,8 +69,11 @@ ctest --test-dir build-desktop -C Release --output-on-failure
 .\build-desktop\Release\abitur-window-smoke.exe
 ```
 
-The window smoke test requires an OpenGL 3.2 driver. Windows CI compiles this
-target and runs geometry tests; it does not assume a suitable graphics driver.
+The window smoke test requires an OpenGL 3.2 driver. Hosted Windows and macOS CI
+compile this target and run geometry tests; neither job assumes a suitable
+graphics driver. The hosted macOS VM did not provide a suitable OpenGL 3.2 pixel
+format. Native macOS window behavior is verified locally on a graphical machine;
+Linux CI runs the window smoke test with Mesa under Xvfb.
 
 To build the full analyzer, provide a compatible LLVM development installation:
 

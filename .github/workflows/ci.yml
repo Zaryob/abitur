@@ -57,6 +57,5 @@ jobs:
         run: cmake --build build-desktop --config Release --parallel 2
       - name: Test window geometry
         run: ctest --test-dir build-desktop -C Release --output-on-failure
-      - name: Test macOS desktop window
-        if: runner.os == 'macOS'
-        run: ./build-desktop/abitur-window-smoke
+      # Hosted macOS/Windows VMs are not assumed to expose OpenGL 3.2.
+      # Native window smoke tests run locally; Linux CI uses Mesa under Xvfb.
