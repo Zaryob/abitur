@@ -155,9 +155,12 @@ struct App {
         assign(output, "abi-report");
     }
     void analyze() {
-        if (running || !old_path[0] || !new_path[0])
+        if (running || !old_path[0])
             return;
-        abitur::Options options{old_path.data(), new_path.data(), {}};
+        abitur::Options options;
+        options.old_path = old_path.data();
+        if (new_path[0])
+            options.new_path = new_path.data();
         if (consumer_path[0])
             options.consumers.emplace_back(consumer_path.data());
         error.clear();
@@ -166,7 +169,11 @@ struct App {
         selected = -1;
         running = true;
         started = std::chrono::steady_clock::now();
-        task = std::async(std::launch::async, [options] { return abitur::compare(options); });
+        task = std::async(std::launch::async, [options] {
+            if (options.new_path.empty())
+                return abitur::analyze(options);
+            return abitur::compare(options);
+        });
     }
     void poll() {
         if (running && task.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
@@ -229,15 +236,18 @@ struct App {
         wrapped("Compare exported interfaces and reachable type layouts.");
         ImGui::Dummy({0, 14});
         ImGui::BeginDisabled(running);
-        file_input("01  BASELINE", "/path/to/old/libexample.so", old_path, 0);
-        file_input("02  CANDIDATE", "/path/to/new/libexample.so", new_path, 1);
+        file_input("01  TARGET (ELF / MACH-O / .SO / .DYLIB / .A)", "/path/to/target/libexample.so", old_path, 0);
+        file_input("02  CANDIDATE  /  OPTIONAL", "/path/to/candidate/libexample.so", new_path, 1);
         file_input("03  CONSUMER  /  OPTIONAL", "/path/to/application", consumer_path, 2);
-        if (ImGui::SmallButton("Swap baseline / candidate"))
+        if (ImGui::SmallButton("Swap target / candidate"))
             std::swap(old_path, new_path);
         ImGui::Dummy({0, 12});
-        ImGui::BeginDisabled(!old_path[0] || !new_path[0]);
+        bool has_target = old_path[0] != 0;
+        bool has_candidate = new_path[0] != 0;
+        ImGui::BeginDisabled(!has_target);
         ImGui::PushStyleColor(ImGuiCol_Button, {0.17f, 0.42f, 0.35f, 1});
-        if (ImGui::Button("Analyze compatibility", {-1, 44}))
+        const char* btn_label = has_candidate ? "Compare ABI compatibility" : "Analyze binary";
+        if (ImGui::Button(btn_label, {-1, 44}))
             analyze();
         ImGui::PopStyleColor();
         ImGui::EndDisabled();
@@ -246,14 +256,14 @@ struct App {
             auto seconds = std::chrono::duration_cast<std::chrono::seconds>(
                                std::chrono::steady_clock::now() - started)
                                .count();
-            ImGui::TextColored(accent, "Analyzing ELF + DWARF ... %llds",
+            ImGui::TextColored(accent, "Analyzing binary + DWARF ... %llds",
                                static_cast<long long>(seconds));
         }
         ImGui::Dummy({0, 20});
         ImGui::Separator();
         ImGui::Dummy({0, 12});
         label("INPUT CONTRACT");
-        wrapped("Linux ELF .so or regular .a\nEmbedded DWARF (-g)\nMatching compiler and target");
+        wrapped("ELF .so, Mach-O .dylib, or static .a\nDWARF debug info (-g / .dSYM)\nMatching compiler and target");
         ImGui::Dummy({0, 12});
         label("DECISION POLICY");
         ImGui::TextColored(red, "BREAK");
@@ -304,6 +314,224 @@ struct App {
             return;
         }
         auto& r = *report;
+        if (r.elf_analysis.has_value()) {
+            const auto& elf = *r.elf_analysis;
+            bool is_macho = elf.osabi.find("Mach-O") != std::string::npos || elf.file_type.find("Mach-O") != std::string::npos;
+            ImGui::TextColored(accent, "%s ANALYSIS  /  %s", is_macho ? "MACH-O" : "ELF BINARY", elf.file_type.c_str());
+            label(elf.path.c_str());
+            ImGui::Spacing();
+
+            if (ImGui::BeginTabBar("elf_tabs")) {
+                if (ImGui::BeginTabItem("Overview & Headers")) {
+                    ImGui::Spacing();
+                    ImGui::Text("Architecture:    %s", elf.machine.c_str());
+                    ImGui::Text("Class & Endian:  %s | %s", elf.elf_class.c_str(), elf.endianness.c_str());
+                    ImGui::Text("OS / ABI:        %s (version %d)", elf.osabi.c_str(), elf.abi_version);
+                    if (elf.entry_point)
+                        ImGui::Text("Entry Point:     0x%llx", static_cast<unsigned long long>(elf.entry_point));
+                    if (!elf.soname.empty())
+                        ImGui::Text("%s:          %s", is_macho ? "Install Name" : "SONAME", elf.soname.c_str());
+                    if (!elf.rpath.empty())
+                        ImGui::Text("RPATH:           %s", elf.rpath.c_str());
+                    if (!elf.runpath.empty())
+                        ImGui::Text("RUNPATH:         %s", elf.runpath.c_str());
+
+                    ImGui::Dummy({0, 10});
+                    ImGui::Separator();
+                    label("SECURITY PROFILE");
+                    for (const auto& feat : elf.security_features) {
+                        bool is_alert = feat.find("security alert") != std::string::npos;
+                        ImGui::TextColored(is_alert ? red : accent, "• %s", feat.c_str());
+                    }
+
+                    if (!elf.needed_libraries.empty()) {
+                        ImGui::Dummy({0, 10});
+                        ImGui::Separator();
+                        label(is_macho ? "LOADED DYLIBS (LC_LOAD_DYLIB)" : "DYNAMIC DEPENDENCIES (DT_NEEDED)");
+                        for (const auto& lib : elf.needed_libraries) {
+                            ImGui::Text("  lib: %s", lib.c_str());
+                        }
+                    }
+                    ImGui::EndTabItem();
+                }
+
+                if (ImGui::BeginTabItem("Exported Symbols")) {
+                    ImGui::Spacing();
+                    filter.Draw("Filter exports", 200);
+                    ImGui::Spacing();
+                    float table_h = ImGui::GetContentRegionAvail().y - 10;
+                    if (ImGui::BeginTable("exports_table", 5,
+                                          ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH |
+                                          ImGuiTableFlags_ScrollY | ImGuiTableFlags_Resizable,
+                                          {0, table_h})) {
+                        ImGui::TableSetupColumn("NAME", ImGuiTableColumnFlags_WidthStretch, 0.35f);
+                        ImGui::TableSetupColumn("TYPE", ImGuiTableColumnFlags_WidthFixed, 65);
+                        ImGui::TableSetupColumn("BIND", ImGuiTableColumnFlags_WidthFixed, 65);
+                        ImGui::TableSetupColumn("SIZE", ImGuiTableColumnFlags_WidthFixed, 55);
+                        ImGui::TableSetupColumn("SIGNATURE", ImGuiTableColumnFlags_WidthStretch, 0.45f);
+                        ImGui::TableSetupScrollFreeze(0, 1);
+                        ImGui::TableHeadersRow();
+
+                        for (int i = 0; i < static_cast<int>(elf.exports.size()); ++i) {
+                            const auto& sym = elf.exports[i];
+                            auto search_str = sym.name + " " + sym.demangled + " " + sym.signature;
+                            if (!filter.PassFilter(search_str.c_str()))
+                                continue;
+                            ImGui::TableNextRow();
+                            ImGui::TableSetColumnIndex(0);
+                            ImGui::TextUnformatted(sym.name.c_str());
+                            if (!sym.demangled.empty() && sym.demangled != sym.name) {
+                                ImGui::SameLine();
+                                ImGui::TextColored(muted, "(%s)", sym.demangled.c_str());
+                            }
+                            ImGui::TableSetColumnIndex(1);
+                            ImGui::TextUnformatted(sym.type.c_str());
+                            ImGui::TableSetColumnIndex(2);
+                            ImGui::TextUnformatted(sym.binding.c_str());
+                            ImGui::TableSetColumnIndex(3);
+                            ImGui::Text("%llu", static_cast<unsigned long long>(sym.size));
+                            ImGui::TableSetColumnIndex(4);
+                            ImGui::TextColored(accent, "%s", sym.signature.empty() ? "-" : sym.signature.c_str());
+                        }
+                        ImGui::EndTable();
+                    }
+                    ImGui::EndTabItem();
+                }
+
+                if (ImGui::BeginTabItem("Imported Symbols")) {
+                    ImGui::Spacing();
+                    filter.Draw("Filter imports", 200);
+                    ImGui::Spacing();
+                    float table_h = ImGui::GetContentRegionAvail().y - 10;
+                    if (ImGui::BeginTable("imports_table", 1,
+                                          ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH |
+                                          ImGuiTableFlags_ScrollY,
+                                          {0, table_h})) {
+                        ImGui::TableSetupColumn("SYMBOL NAME", ImGuiTableColumnFlags_WidthStretch);
+                        ImGui::TableSetupScrollFreeze(0, 1);
+                        ImGui::TableHeadersRow();
+                        for (const auto& imp : elf.imports) {
+                            if (!filter.PassFilter(imp.c_str()))
+                                continue;
+                            ImGui::TableNextRow();
+                            ImGui::TableSetColumnIndex(0);
+                            ImGui::TextUnformatted(imp.c_str());
+                        }
+                        ImGui::EndTable();
+                    }
+                    ImGui::EndTabItem();
+                }
+
+                if (ImGui::BeginTabItem("Sections & Segments")) {
+                    ImGui::Spacing();
+                    label("PROGRAM HEADERS / SEGMENTS");
+                    if (ImGui::BeginTable("segments_table", 6,
+                                          ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH |
+                                          ImGuiTableFlags_Resizable,
+                                          {0, 140})) {
+                        ImGui::TableSetupColumn("TYPE", ImGuiTableColumnFlags_WidthFixed, 110);
+                        ImGui::TableSetupColumn("VADDR", ImGuiTableColumnFlags_WidthFixed, 90);
+                        ImGui::TableSetupColumn("FILE SZ", ImGuiTableColumnFlags_WidthFixed, 80);
+                        ImGui::TableSetupColumn("MEM SZ", ImGuiTableColumnFlags_WidthFixed, 80);
+                        ImGui::TableSetupColumn("FLAGS", ImGuiTableColumnFlags_WidthFixed, 60);
+                        ImGui::TableSetupColumn("ALIGN", ImGuiTableColumnFlags_WidthFixed, 70);
+                        ImGui::TableHeadersRow();
+                        for (const auto& seg : elf.segments) {
+                            ImGui::TableNextRow();
+                            ImGui::TableSetColumnIndex(0);
+                            ImGui::TextUnformatted(seg.type.c_str());
+                            ImGui::TableSetColumnIndex(1);
+                            ImGui::Text("0x%llx", static_cast<unsigned long long>(seg.vaddr));
+                            ImGui::TableSetColumnIndex(2);
+                            ImGui::Text("0x%llx", static_cast<unsigned long long>(seg.file_size));
+                            ImGui::TableSetColumnIndex(3);
+                            ImGui::Text("0x%llx", static_cast<unsigned long long>(seg.mem_size));
+                            ImGui::TableSetColumnIndex(4);
+                            ImGui::TextUnformatted(seg.flags.c_str());
+                            ImGui::TableSetColumnIndex(5);
+                            ImGui::Text("0x%llx", static_cast<unsigned long long>(seg.align));
+                        }
+                        ImGui::EndTable();
+                    }
+
+                    ImGui::Dummy({0, 10});
+                    label("SECTIONS");
+                    float sec_h = ImGui::GetContentRegionAvail().y - 10;
+                    if (ImGui::BeginTable("sections_table", 5,
+                                          ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH |
+                                          ImGuiTableFlags_ScrollY | ImGuiTableFlags_Resizable,
+                                          {0, sec_h})) {
+                        ImGui::TableSetupColumn("NAME", ImGuiTableColumnFlags_WidthStretch, 0.35f);
+                        ImGui::TableSetupColumn("TYPE", ImGuiTableColumnFlags_WidthFixed, 100);
+                        ImGui::TableSetupColumn("ADDRESS", ImGuiTableColumnFlags_WidthFixed, 90);
+                        ImGui::TableSetupColumn("SIZE", ImGuiTableColumnFlags_WidthFixed, 80);
+                        ImGui::TableSetupColumn("FLAGS", ImGuiTableColumnFlags_WidthStretch, 0.35f);
+                        ImGui::TableSetupScrollFreeze(0, 1);
+                        ImGui::TableHeadersRow();
+                        for (const auto& sec : elf.sections) {
+                            ImGui::TableNextRow();
+                            ImGui::TableSetColumnIndex(0);
+                            ImGui::TextUnformatted(sec.name.c_str());
+                            ImGui::TableSetColumnIndex(1);
+                            ImGui::TextUnformatted(sec.type.c_str());
+                            ImGui::TableSetColumnIndex(2);
+                            ImGui::Text("0x%llx", static_cast<unsigned long long>(sec.address));
+                            ImGui::TableSetColumnIndex(3);
+                            ImGui::Text("0x%llx", static_cast<unsigned long long>(sec.size));
+                            ImGui::TableSetColumnIndex(4);
+                            ImGui::TextUnformatted(sec.flags.c_str());
+                        }
+                        ImGui::EndTable();
+                    }
+                    ImGui::EndTabItem();
+                }
+
+                if (ImGui::BeginTabItem("Type & Struct Layouts")) {
+                    ImGui::Spacing();
+                    filter.Draw("Filter types", 200);
+                    ImGui::Spacing();
+                    ImGui::BeginChild("types_child", {0, 0}, ImGuiChildFlags_Borders);
+                    for (int i = 0; i < static_cast<int>(elf.type_layouts.size()); ++i) {
+                        const auto& tl = elf.type_layouts[i];
+                        if (!filter.PassFilter(tl.name.c_str()))
+                            continue;
+                        std::string header = tl.kind + " " + tl.name + " (" +
+                                             std::to_string(tl.byte_size) + " bytes, align " +
+                                             std::to_string(tl.alignment) + ")";
+                        if (ImGui::CollapsingHeader(header.c_str())) {
+                            for (const auto& m : tl.members) {
+                                if (m.is_padding) {
+                                    ImGui::TextColored(amber, "    +0x%02llx  [%llu bytes padding/hole]",
+                                                       static_cast<unsigned long long>(m.offset),
+                                                       static_cast<unsigned long long>(m.size));
+                                } else {
+                                    ImGui::Text("    +0x%02llx  %-16s %s (%llu bytes)",
+                                                static_cast<unsigned long long>(m.offset),
+                                                m.type.c_str(), m.name.c_str(),
+                                                static_cast<unsigned long long>(m.size));
+                                }
+                            }
+                        }
+                    }
+                    ImGui::EndChild();
+                    ImGui::EndTabItem();
+                }
+
+                if (!r.consumers.empty() && ImGui::BeginTabItem("Consumer Verification")) {
+                    ImGui::Spacing();
+                    for (const auto& c : r.consumers) {
+                        ImGui::TextColored(accent, "Consumer: %s", c.path.c_str());
+                        ImGui::Text("Matched imports: %zu", c.imports.size());
+                        ImGui::Dummy({0, 10});
+                    }
+                    ImGui::EndTabItem();
+                }
+
+                ImGui::EndTabBar();
+            }
+            return;
+        }
+
         ImVec4 decision_color = r.decision == "break"    ? red
                                 : r.decision == "review" ? amber
                                                          : accent;
@@ -391,7 +619,7 @@ struct App {
             if (ImGui::BeginTabItem("Consumers")) {
                 if (r.consumers.empty())
                     wrapped(
-                        "No consumer supplied. Add an ELF application to inspect direct imports.");
+                        "No consumer supplied. Add an application or library to inspect direct imports.");
                 for (const auto& c : r.consumers) {
                     wrapped(c.path);
                     ImGui::TextColored(c.affected.empty() ? muted : amber,

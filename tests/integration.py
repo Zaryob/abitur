@@ -68,6 +68,13 @@ def main():
             checks += 1
             return json.loads(proc.stdout) if expected != 2 else proc.stderr
 
+        def analyze_single(path, expected, *options):
+            nonlocal checks
+            proc = subprocess.run([args.cli, str(path), "--format", "json", *map(str, options)], capture_output=True, text=True)
+            assert proc.returncode == expected, (proc.returncode, expected, proc.stdout, proc.stderr)
+            checks += 1
+            return json.loads(proc.stdout) if expected != 2 else proc.stderr
+
         baseline = 'struct Item { int x; int y; }; extern "C" int inspect(Item* p) { return p->x; } extern "C" int removed() { return 1; }'
         old = fixture("old", baseline)
         same = fixture("same", baseline)
@@ -90,6 +97,14 @@ def main():
             report = compare(old[kind], signature[kind], 1)
             assert any("return.size: 4 -> 8" in e for f in report["findings"] for e in f["evidence"]), report
             assert "DWARF" in compare(no_debug[kind], old[kind], 2)
+
+        # Single-binary ELF analysis without candidate
+        single_rep = analyze_single(old[0], 0)
+        assert single_rep["scope"] == "elf-binary-analysis"
+        assert "elf_analysis" in single_rep
+        assert "x86_64" in single_rep["elf_analysis"]["machine"]
+        assert any(e["name"] == "inspect" for e in single_rep["elf_analysis"]["exports"])
+        assert any(t["name"] == "Item" for t in single_rep["elf_analysis"]["type_layouts"])
 
         # Self-referential type graph terminates and still finds nested layout changes.
         recursive = 'struct Link { Link* next; int value; }; extern "C" int walk(Link* n) { return n->value; }'
@@ -189,6 +204,53 @@ def main():
         first = run([args.cli, str(old[0]), str(old[0]), "--format", "json"]).stdout
         second = run([args.cli, str(old[0]), str(old[0]), "--format", "json"]).stdout
         assert first == second
+
+        if sys.platform == "darwin":
+            macho_dir = root / "macho"
+            macho_dir.mkdir()
+            macho_v1_cpp = macho_dir / "v1.cpp"
+            macho_v1_cpp.write_text('extern "C" int c_func(int a) { return a + 1; }\nint cpp_func(int b) { return b * 2; }\nstruct Point { int x; int y; };\nextern "C" Point make_point(int x, int y) { return {x, y}; }\n')
+            macho_v1_dylib = macho_dir / "libtest_v1.dylib"
+            macho_v1_obj = macho_dir / "v1.o"
+            macho_v1_a = macho_dir / "libtest_v1.a"
+            run([cxx, "-std=c++20", "-fPIC", "-g", "-c", macho_v1_cpp, "-o", macho_v1_obj])
+            run([cxx, "-dynamiclib", "-g", macho_v1_obj, "-o", macho_v1_dylib])
+            run([ar, "rcs", macho_v1_a, macho_v1_obj])
+
+            # Test single-binary analyze for Mach-O .dylib
+            macho_res = run([args.cli, str(macho_v1_dylib), "--format", "json"]).stdout
+            macho_data = json.loads(macho_res)
+            assert macho_data["decision"] == "pass"
+            assert "Mach-O" in macho_data["elf_analysis"]["file_type"]
+            assert any(e["name"] == "_c_func" for e in macho_data["elf_analysis"]["exports"])
+            assert any(t["name"] == "Point" for t in macho_data["elf_analysis"]["type_layouts"])
+            checks += 1
+
+            # Test single-binary analyze for Mach-O .a archive
+            macho_a_res = run([args.cli, str(macho_v1_a), "--format", "json"]).stdout
+            macho_a_data = json.loads(macho_a_res)
+            assert macho_a_data["decision"] == "pass"
+            assert "Mach-O" in macho_a_data["elf_analysis"]["file_type"]
+            checks += 1
+
+            # Test Mach-O compare with breaking change
+            macho_v2_cpp = macho_dir / "v2.cpp"
+            macho_v2_cpp.write_text('extern "C" int c_func(double a) { return (int)a + 1; }\nstruct Point { int x; int y; int z; };\nextern "C" Point make_point(int x, int y) { return {x, y, 0}; }\n')
+            macho_v2_dylib = macho_dir / "libtest_v2.dylib"
+            macho_v2_obj = macho_dir / "v2.o"
+            macho_v2_a = macho_dir / "libtest_v2.a"
+            run([cxx, "-std=c++20", "-fPIC", "-g", "-c", macho_v2_cpp, "-o", macho_v2_obj])
+            run([cxx, "-dynamiclib", "-g", macho_v2_obj, "-o", macho_v2_dylib])
+            run([ar, "rcs", macho_v2_a, macho_v2_obj])
+
+            diff_report = compare(macho_v1_dylib, macho_v2_dylib, 1)
+            assert any(f["rule_id"] == "ABI002" for f in diff_report["findings"])
+            assert any(f["rule_id"] == "ABI005" for f in diff_report["findings"])
+
+            diff_a_report = compare(macho_v1_a, macho_v2_a, 1)
+            assert any(f["rule_id"] == "ABI002" for f in diff_a_report["findings"])
+            assert any(f["rule_id"] == "ABI005" for f in diff_a_report["findings"])
+
         print(f"{checks} ABI integration checks + SARIF export + deterministic serialization passed")
 
 

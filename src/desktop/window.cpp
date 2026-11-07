@@ -67,7 +67,64 @@ ImGuiMouseCursor cursor_for(Edge edge) {
                                                            : ImGuiMouseCursor_ResizeNS;
 }
 
+#if defined(__APPLE__)
+constexpr bool is_apple = true;
+#else
+constexpr bool is_apple = false;
+#endif
+
 enum class Control { minimize, maximize, close };
+
+bool traffic_light(Control kind, ImVec2 center, float radius, bool maximized) {
+    ImVec2 min{center.x - radius - 3, center.y - radius - 3};
+    ImVec2 size{radius * 2 + 6, radius * 2 + 6};
+    ImGui::SetCursorPos(min);
+    const char* id = kind == Control::close      ? "##mac_close"
+                     : kind == Control::minimize ? "##mac_minimize"
+                                                 : "##mac_maximize";
+    bool pressed = ImGui::InvisibleButton(id, size);
+    auto* draw = ImGui::GetWindowDrawList();
+    bool hover = ImGui::IsItemHovered();
+
+    ImU32 fill, border, symbol_color;
+    if (kind == Control::close) {
+        fill = hover ? IM_COL32(255, 95, 86, 255) : IM_COL32(235, 86, 79, 230);
+        border = IM_COL32(224, 68, 62, 255);
+        symbol_color = IM_COL32(75, 10, 10, 230);
+    } else if (kind == Control::minimize) {
+        fill = hover ? IM_COL32(255, 189, 46, 255) : IM_COL32(235, 172, 38, 230);
+        border = IM_COL32(222, 161, 35, 255);
+        symbol_color = IM_COL32(130, 75, 0, 230);
+    } else {
+        fill = hover ? IM_COL32(39, 201, 63, 255) : IM_COL32(35, 182, 57, 230);
+        border = IM_COL32(26, 171, 41, 255);
+        symbol_color = IM_COL32(10, 85, 15, 230);
+    }
+
+    draw->AddCircleFilled(center, radius, fill, 16);
+    draw->AddCircle(center, radius, border, 16, 0.9f);
+
+    if (hover) {
+        if (kind == Control::close) {
+            draw->AddLine({center.x - 3, center.y - 3}, {center.x + 3, center.y + 3}, symbol_color, 1.2f);
+            draw->AddLine({center.x + 3, center.y - 3}, {center.x - 3, center.y + 3}, symbol_color, 1.2f);
+        } else if (kind == Control::minimize) {
+            draw->AddLine({center.x - 3.5f, center.y}, {center.x + 3.5f, center.y}, symbol_color, 1.4f);
+        } else if (maximized) {
+            draw->AddLine({center.x - 3, center.y - 3}, {center.x + 3, center.y + 3}, symbol_color, 1.2f);
+            draw->AddLine({center.x - 3, center.y + 3}, {center.x + 3, center.y - 3}, symbol_color, 1.2f);
+        } else {
+            draw->AddLine({center.x - 3.5f, center.y}, {center.x + 3.5f, center.y}, symbol_color, 1.2f);
+            draw->AddLine({center.x, center.y - 3.5f}, {center.x, center.y + 3.5f}, symbol_color, 1.2f);
+        }
+        ImGui::SetTooltip("%s", kind == Control::close      ? "Close"
+                                : kind == Control::minimize ? "Minimize"
+                                : maximized                 ? "Restore"
+                                                            : "Zoom");
+    }
+    return pressed;
+}
+
 bool control(Control kind, ImVec2 pos, bool maximized) {
     ImGui::SetCursorPos(pos);
     const char* id = kind == Control::minimize   ? "##minimize"
@@ -383,6 +440,7 @@ Rect Window::draw_chrome(const ChromeState& state) {
     bool focused = glfwGetWindowAttrib(impl_->handle, GLFW_FOCUSED);
     auto border_color = focused ? IM_COL32(76, 115, 111, 255) : IM_COL32(52, 58, 68, 255);
     draw->AddRectFilled({0, 0}, {size.x, title_height}, ImGui::GetColorU32(surface));
+    draw->AddLine({0, 1.0f}, {size.x, 1.0f}, IM_COL32(255, 255, 255, 18));
     draw->AddRect({0.5f, 0.5f}, {size.x - 0.5f, size.y - 0.5f}, border_color);
     draw->AddLine({border, title_height}, {size.x - border, title_height},
                   ImGui::GetColorU32(ImGuiCol_Border));
@@ -395,28 +453,56 @@ Rect Window::draw_chrome(const ChromeState& state) {
     draw->AddText({size.x - detail_width - 18, size.y - 23}, ImGui::GetColorU32(muted),
                   state.detail.c_str());
 
-    ImGui::SetCursorPos({border, border});
-    ImGui::InvisibleButton("##title-drag",
-                           {std::max(1.0f, size.x - 2 * border - 3 * 44), title_height - border});
+    float drag_x = is_apple ? 78.0f : border;
+    float drag_w = is_apple ? std::max(1.0f, size.x - drag_x - border)
+                            : std::max(1.0f, size.x - 2 * border - 3 * 44);
+    ImGui::SetCursorPos({drag_x, border});
+    ImGui::InvisibleButton("##title-drag", {drag_w, title_height - border});
     bool double_click =
         ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left);
     if (double_click)
         toggle_maximize();
     else if (ImGui::IsItemActivated() && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
         impl_->start_drag(Impl::Drag::move);
-    // All title-bar graphics are ImGui primitives, including window controls.
+
+    if constexpr (is_apple) {
+        if (traffic_light(Control::close, {20, title_height * 0.5f}, 6.0f, maximized()))
+            close();
+        if (traffic_light(Control::minimize, {40, title_height * 0.5f}, 6.0f, maximized()))
+            minimize();
+        if (traffic_light(Control::maximize, {60, title_height * 0.5f}, 6.0f, maximized()))
+            toggle_maximize();
+    } else {
+        if (control(Control::minimize, {size.x - border - 3 * 44, border}, maximized()))
+            minimize();
+        if (control(Control::maximize, {size.x - border - 2 * 44, border}, maximized()))
+            toggle_maximize();
+        if (control(Control::close, {size.x - border - 44, border}, maximized()))
+            close();
+    }
+
+    float brand_x = is_apple ? 88.0f : 18.0f;
     auto ink = ImGui::GetColorU32(accent);
-    draw->AddRect({18, 16}, {33, 31}, ink, 2, 0, 1.5f);
-    draw->AddLine({23, 20}, {23, 27}, ink, 1.5f);
-    draw->AddLine({28, 23}, {28, 27}, ink, 1.5f);
-    draw->AddText({44, 15}, ImGui::GetColorU32(ImGuiCol_Text), "ABITUR");
-    draw->AddText({119, 15}, ImGui::GetColorU32(muted), "ABI Compatibility Workbench");
-    if (control(Control::minimize, {size.x - border - 3 * 44, border}, maximized()))
-        minimize();
-    if (control(Control::maximize, {size.x - border - 2 * 44, border}, maximized()))
-        toggle_maximize();
-    if (control(Control::close, {size.x - border - 44, border}, maximized()))
-        close();
+    draw->AddRectFilled({brand_x, 14}, {brand_x + 20, 34}, IM_COL32(24, 46, 40, 255), 4);
+    draw->AddRect({brand_x, 14}, {brand_x + 20, 34}, ink, 4, 0, 1.2f);
+    draw->AddLine({brand_x + 6, 20}, {brand_x + 6, 28}, ink, 1.5f);
+    draw->AddLine({brand_x + 10, 17}, {brand_x + 10, 28}, ink, 1.5f);
+    draw->AddLine({brand_x + 14, 23}, {brand_x + 14, 28}, ink, 1.5f);
+
+    draw->AddText({brand_x + 28, 15}, ImGui::GetColorU32(ImGuiCol_Text), "ABITUR");
+    draw->AddText({brand_x + 88, 15}, ImGui::GetColorU32(muted), "|");
+    draw->AddText({brand_x + 100, 15}, ImGui::GetColorU32(muted), "ELF Analyzer & ABI Workbench");
+
+    if (!state.detail.empty()) {
+        auto tag_text = state.detail.c_str();
+        auto tag_w = ImGui::CalcTextSize(tag_text).x;
+        float pill_x = (is_apple ? size.x - tag_w - 32 : size.x - 3 * 44 - tag_w - 24);
+        if (pill_x > brand_x + 360) {
+            draw->AddRectFilled({pill_x - 8, 14}, {pill_x + tag_w + 8, 34}, IM_COL32(28, 34, 42, 255), 4);
+            draw->AddRect({pill_x - 8, 14}, {pill_x + tag_w + 8, 34}, IM_COL32(50, 58, 70, 255), 4);
+            draw->AddText({pill_x, 15}, ImGui::GetColorU32(accent), tag_text);
+        }
+    }
 
     bool modal =
         ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel);

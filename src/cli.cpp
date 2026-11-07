@@ -32,12 +32,14 @@ int main(int argc, char** argv) {
             }
             if (arg == "--help" || arg == "-h") {
                 std::cout
-                    << "Usage: abitur OLD.so NEW.so [--consumer APP]... [--format text|json|sarif] "
+                    << "Usage: abitur TARGET [.so|.dylib|.a] [CANDIDATE] [--consumer APP]... [--format text|json|sarif] "
                        "[--output PATH]\n"
-                       "       abitur OLD.a NEW.a [--format text|json|sarif] [--output PATH]\n"
-                       "       abitur --version | --license | --help\n"
+                       "       abitur --version | --license | --help\n\n"
+                       "Modes:\n"
+                       "  Single binary: Performs comprehensive ELF / Mach-O inspection and DWARF type analysis.\n"
+                       "  Two binaries:  Compares structural ABI differences between target and candidate.\n\n"
                        "Exit: 0 pass, 1 break, 2 input/tool error, 3 review required.\n"
-                       "Embedded DWARF required. Consumer imports are evidence, not a "
+                       "DWARF debug info (-g / .dSYM) required. Consumer imports are evidence, not a "
                        "runtime-safety proof.\n";
                 return 0;
             }
@@ -61,11 +63,19 @@ int main(int argc, char** argv) {
             } else
                 throw std::runtime_error("Unexpected argument: " + arg);
         }
-        if (!have_old || !have_new)
-            throw std::runtime_error("Provide old and new libraries; see --help");
+        if (!have_old)
+            throw std::runtime_error("Provide at least one binary or archive; see --help");
         if (format != "text" && format != "json" && format != "sarif")
             throw std::runtime_error("Format must be text, json or sarif");
-        auto report = abitur::compare(options);
+
+        abitur::Report report;
+        if (!have_new) {
+            options.analyze_mode = true;
+            report = abitur::analyze(options);
+        } else {
+            report = abitur::compare(options);
+        }
+
         auto contents = format == "json"    ? abitur::json(report)
                         : format == "sarif" ? abitur::sarif(report)
                                             : abitur::text(report);
