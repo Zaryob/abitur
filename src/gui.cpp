@@ -139,7 +139,7 @@ struct Browser {
 };
 
 struct App {
-    std::array<char, 4096> old_path{}, new_path{}, consumer_path{};
+    std::array<char, 4096> old_path{}, new_path{}, consumer_path{}, suppression_path{};
     std::array<char, 4096> output{};
     std::optional<abitur::Report> report;
     std::future<abitur::Report> task;
@@ -163,6 +163,8 @@ struct App {
             options.new_path = new_path.data();
         if (consumer_path[0])
             options.consumers.emplace_back(consumer_path.data());
+        if (suppression_path[0])
+            options.suppression_file = suppression_path.data();
         error.clear();
         notification.clear();
         report.reset();
@@ -239,6 +241,7 @@ struct App {
         file_input("01  TARGET (ELF / MACH-O / .SO / .DYLIB / .A)", "/path/to/target/libexample.so", old_path, 0);
         file_input("02  CANDIDATE  /  OPTIONAL", "/path/to/candidate/libexample.so", new_path, 1);
         file_input("03  CONSUMER  /  OPTIONAL", "/path/to/application", consumer_path, 2);
+        file_input("04  SUPPRESSIONS  /  OPTIONAL", "/path/to/abitur.supp", suppression_path, 3);
         if (ImGui::SmallButton("Swap target / candidate"))
             std::swap(old_path, new_path);
         ImGui::Dummy({0, 12});
@@ -600,6 +603,17 @@ struct App {
                     if (!f.symbol.empty()) {
                         ImGui::Separator();
                         wrapped(f.symbol);
+                        std::string flag = "--suppress " + f.rule + ":" + f.symbol;
+                        if (ImGui::SmallButton(("Copy suppression: " + flag).c_str())) {
+                            ImGui::SetClipboardText(flag.c_str());
+                            notification = "Copied to clipboard: " + flag;
+                        }
+                    } else if (!f.rule.empty()) {
+                        std::string flag = "--suppress " + f.rule;
+                        if (ImGui::SmallButton(("Copy suppression: " + flag).c_str())) {
+                            ImGui::SetClipboardText(flag.c_str());
+                            notification = "Copied to clipboard: " + flag;
+                        }
                     }
                     for (const auto& e : f.evidence) {
                         ImGui::Spacing();
@@ -679,8 +693,10 @@ struct App {
                 assign(old_path, *chosen);
             else if (browser.destination == 1)
                 assign(new_path, *chosen);
-            else
+            else if (browser.destination == 2)
                 assign(consumer_path, *chosen);
+            else if (browser.destination == 3)
+                assign(suppression_path, *chosen);
         }
         ImGui::End();
         ImGui::PopStyleVar();
