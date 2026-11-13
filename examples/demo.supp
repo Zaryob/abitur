@@ -1,0 +1,9 @@
+# Abitur suppression file for demo-build
+# Comments start with hash (#)
+
+# Suppress removed legacy version symbol
+ABI002:legacy_version
+
+# Suppress changed function signatures/layouts
+ABI005:checksum
+ABI005:process

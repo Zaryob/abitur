@@ -1,0 +1,104 @@
+name: 'Abitur ABI Compatibility Check'
+description: 'Runs Abitur structural ABI comparison and emits SARIF/JSON reports and GitHub Step Summary'
+inputs:
+  abitur-bin:
+    description: 'Path to abitur executable'
+    required: false
+    default: './build/abitur'
+  baseline:
+    description: 'Baseline library (.so, .dylib, or .a)'
+    required: true
+  candidate:
+    description: 'Candidate replacement library'
+    required: true
+  consumer:
+    description: 'Optional consumer application or library to verify direct imports'
+    required: false
+    default: ''
+  suppression-file:
+    description: 'Optional path to suppression file'
+    required: false
+    default: ''
+  output:
+    description: 'Report output path'
+    required: false
+    default: 'abitur-report.json'
+  format:
+    description: 'Report format: text, json, or sarif'
+    required: false
+    default: 'json'
+
+outputs:
+  decision:
+    description: 'ABI decision: pass, break, or review'
+    value: ${{ steps.run-abitur.outputs.decision }}
+  exit-code:
+    description: 'Exit code from Abitur'
+    value: ${{ steps.run-abitur.outputs.exit_code }}
+
+runs:
+  using: 'composite'
+  steps:
+    - id: run-abitur
+      shell: bash
+      run: |
+        CMD=("${{ inputs.abitur-bin }}" "${{ inputs.baseline }}" "${{ inputs.candidate }}")
+        if [ -n "${{ inputs.consumer }}" ]; then
+          CMD+=("--consumer" "${{ inputs.consumer }}")
+        fi
+        if [ -n "${{ inputs.suppression-file }}" ]; then
+          CMD+=("--suppression-file" "${{ inputs.suppression-file }}")
+        fi
+        CMD+=("--format" "${{ inputs.format }}" "--output" "${{ inputs.output }}")
+
+        echo "Executing: ${CMD[*]}"
+        set +e
+        "${CMD[@]}"
+        EXIT_CODE=$?
+        set -e
+        echo "exit_code=$EXIT_CODE" >> "$GITHUB_OUTPUT"
+
+        DECISION="pass"
+        if [ "$EXIT_CODE" -eq 1 ]; then
+          DECISION="break"
+        elif [ "$EXIT_CODE" -eq 3 ]; then
+          DECISION="review"
+        elif [ "$EXIT_CODE" -ne 0 ]; then
+          DECISION="error"
+        fi
+        echo "decision=$DECISION" >> "$GITHUB_OUTPUT"
+
+        if [ -f "${{ inputs.output }}" ] && [ "${{ inputs.format }}" = "json" ]; then
+          python3 -c "
+        import json, os, sys
+        with open('${{ inputs.output }}') as f:
+            data = json.load(f)
+        summary_file = os.environ.get('GITHUB_STEP_SUMMARY')
+        if summary_file:
+            with open(summary_file, 'a') as out:
+                decision = data.get('decision', 'unknown').upper()
+                emoji = '✅' if decision == 'PASS' else ('❌' if decision == 'BREAK' else '⚠️')
+                out.write(f'### {emoji} Abitur ABI Check: **{decision}**\n\n')
+                out.write(f'**Baseline:** \`{data.get(\"old\", \"\")}\`<br/>\n')
+                out.write(f'**Candidate:** \`{data.get(\"new\", \"\")}\`<br/>\n')
+                out.write(f'**Reason:** {data.get(\"decision_reason\", \"\")}\n\n')
+                findings = data.get('findings', [])
+                if findings:
+                    out.write('| Severity | Rule | Symbol | Message |\n')
+                    out.write('| :--- | :--- | :--- | :--- |\n')
+                    for item in findings:
+                        sev = item.get('severity', '')
+                        icon = '🔴' if sev == 'error' else ('🟡' if sev == 'warning' else 'ℹ️')
+                        out.write(f'| {icon} {sev} | \`{item.get(\"rule_id\", \"\")}\` | \`{item.get(\"symbol\", \"-\")}\` | {item.get(\"message\", \"\")} |\n')
+                else:
+                    out.write('No ABI differences found.\n')
+        "
+        fi
+
+        if [ "$EXIT_CODE" -eq 1 ]; then
+          echo "::error::Abitur detected structural ABI breaks (exit code 1)."
+          exit 1
+        elif [ "$EXIT_CODE" -eq 2 ]; then
+          echo "::error::Abitur execution or input error (exit code 2)."
+          exit 2
+        fi

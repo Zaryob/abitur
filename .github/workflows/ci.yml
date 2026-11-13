@@ -35,6 +35,15 @@ jobs:
           test "$status" -eq 1 || exit 1
       - name: Validate JSON report contract
         run: python3 scripts/check_repository.py --report build/demo-report.json
+      - name: Test Abitur Composite Action with suppressions
+        uses: ./.github/actions/abitur-check
+        with:
+          abitur-bin: ./build/abitur
+          baseline: demo-build/old/libexample.so
+          candidate: demo-build/new/libexample.so
+          consumer: demo-build/consumer
+          suppression-file: examples/demo.supp
+          output: build/action-demo-report.json
       - uses: actions/upload-artifact@v4
         with:
           name: example-abi-reports
