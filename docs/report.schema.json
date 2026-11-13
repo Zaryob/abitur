@@ -24,7 +24,7 @@
       "additionalProperties": false,
       "required": ["rule_id", "severity", "symbol", "message", "evidence", "consumers"],
       "properties": {
-        "rule_id": {"type": "string", "pattern": "^ABI00[1-7]$"},
+        "rule_id": {"type": "string", "pattern": "^ABI00[1-8]$"},
         "severity": {"enum": ["error", "warning", "note"]},
         "symbol": {"type": "string"},
         "message": {"type": "string"},

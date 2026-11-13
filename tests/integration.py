@@ -98,6 +98,18 @@ def main():
             assert any("return.size: 4 -> 8" in e for f in report["findings"] for e in f["evidence"]), report
             assert "DWARF" in compare(no_debug[kind], old[kind], 2)
 
+        # Suppression tests: command-line --suppress and --suppression-file
+        # Without suppression: removed symbol triggers exit code 1
+        compare(old[0], removed[0], 1)
+        # Suppress by rule:symbol -> passes with 0
+        rep_suppressed = compare(old[0], removed[0], 0, "--suppress", "ABI002:removed")
+        assert not any(f["symbol"] == "removed" for f in rep_suppressed["findings"])
+        # Suppress via file
+        supp_file = root / "abitur.supp"
+        supp_file.write_text("# Suppress removed symbol\nABI002:removed\n")
+        rep_file_supp = compare(old[0], removed[0], 0, "--suppression-file", str(supp_file))
+        assert not any(f["symbol"] == "removed" for f in rep_file_supp["findings"])
+
         # SONAME change detection (ABI008)
         soname_changed = fixture("soname-changed", baseline, soname="libexample.so.2")
         report = compare(old[0], soname_changed[0], 1)

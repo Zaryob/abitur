@@ -41,6 +41,12 @@ contain relocatable ELF or Mach-O members.
 the same target as the baseline. Only direct undefined dynamic symbols matching
 baseline exports are considered. This option is not valid for archives.
 
+`--suppress RULE[:SYMBOL]` may be specified one or more times to suppress known
+or acceptable findings (e.g. `--suppress ABI004` or `--suppress ABI002:legacy_func`).
+Alternatively, `--suppression-file PATH` accepts a file listing rules or symbols
+to ignore (with support for `#` comments). Suppressed findings do not fail the
+comparison gate.
+
 The default format is `text`. Reports go to standard output unless `--output`
 is supplied. The output directory must exist. An existing output file is
 overwritten. Input and tool failures are written to standard error and do not

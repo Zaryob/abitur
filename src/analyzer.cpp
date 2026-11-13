@@ -3,6 +3,7 @@
 
 #include "abitur/analyzer.hpp"
 #include <algorithm>
+#include <fstream>
 #include <functional>
 #include <llvm/ADT/StringExtras.h>
 #include <llvm/BinaryFormat/Dwarf.h>
@@ -1627,6 +1628,65 @@ Report compare(const Options& options) {
         }
     for (const auto& warning : warnings)
         result.findings.push_back({"ABI007", "warning", "", warning, {}, {}});
+
+    std::set<std::string> suppress_rules;
+    std::set<std::string> suppress_symbols;
+    std::set<std::pair<std::string, std::string>> suppress_rule_symbol;
+
+    auto parse_suppression = [&](std::string_view entry) {
+        auto hash_pos = entry.find('#');
+        if (hash_pos != std::string_view::npos)
+            entry = entry.substr(0, hash_pos);
+        while (!entry.empty() && std::isspace(static_cast<unsigned char>(entry.front())))
+            entry.remove_prefix(1);
+        while (!entry.empty() && std::isspace(static_cast<unsigned char>(entry.back())))
+            entry.remove_suffix(1);
+        if (entry.empty())
+            return;
+
+        auto colon = entry.find(':');
+        if (colon != std::string_view::npos) {
+            std::string rule(entry.substr(0, colon));
+            std::string sym(entry.substr(colon + 1));
+            suppress_rule_symbol.insert({rule, sym});
+        } else if (entry.starts_with("ABI0") || entry.starts_with("ELF0") || entry.starts_with("SEC0")) {
+            suppress_rules.insert(std::string(entry));
+        } else {
+            suppress_symbols.insert(std::string(entry));
+        }
+    };
+
+    for (const auto& s : options.suppressions)
+        parse_suppression(s);
+
+    if (!options.suppression_file.empty()) {
+        std::ifstream f(options.suppression_file);
+        if (!f)
+            fail("Cannot open suppression file: " + options.suppression_file.string());
+        std::string line;
+        while (std::getline(f, line))
+            parse_suppression(line);
+    }
+
+    if (!suppress_rules.empty() || !suppress_symbols.empty() || !suppress_rule_symbol.empty()) {
+        auto is_suppressed = [&](const Finding& f) {
+            if (suppress_rules.contains(f.rule))
+                return true;
+            if (!f.symbol.empty()) {
+                if (suppress_symbols.contains(f.symbol))
+                    return true;
+                if (suppress_rule_symbol.contains({f.rule, f.symbol}))
+                    return true;
+            }
+            return false;
+        };
+        std::vector<Finding> retained;
+        for (auto& f : result.findings) {
+            if (!is_suppressed(f))
+                retained.push_back(std::move(f));
+        }
+        result.findings = std::move(retained);
+    }
     for (const auto& path : options.consumers) {
         auto app = consumer(path, old);
         std::set<std::string> affected;

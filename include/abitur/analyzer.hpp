@@ -117,6 +117,8 @@ struct Options {
     std::filesystem::path old_path;
     std::filesystem::path new_path;
     std::vector<std::filesystem::path> consumers;
+    std::vector<std::string> suppressions;
+    std::filesystem::path suppression_file;
     bool analyze_mode = false;
 };
 

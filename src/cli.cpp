@@ -32,7 +32,8 @@ int main(int argc, char** argv) {
             }
             if (arg == "--help" || arg == "-h") {
                 std::cout
-                    << "Usage: abitur TARGET [.so|.dylib|.a] [CANDIDATE] [--consumer APP]... [--format text|json|sarif] "
+                    << "Usage: abitur TARGET [.so|.dylib|.a] [CANDIDATE] [--consumer APP]... "
+                       "[--suppress RULE[:SYM]]... [--suppression-file FILE] [--format text|json|sarif] "
                        "[--output PATH]\n"
                        "       abitur --version | --license | --help\n\n"
                        "Modes:\n"
@@ -43,15 +44,20 @@ int main(int argc, char** argv) {
                        "runtime-safety proof.\n";
                 return 0;
             }
-            if (arg == "--consumer" || arg == "--format" || arg == "--output") {
+            if (arg == "--consumer" || arg == "--format" || arg == "--output" ||
+                arg == "--suppress" || arg == "--suppression-file") {
                 if (++i == argc)
                     throw std::runtime_error("Missing value for " + arg);
                 if (arg == "--consumer")
                     options.consumers.emplace_back(argv[i]);
                 else if (arg == "--format")
                     format = argv[i];
-                else
+                else if (arg == "--output")
                     output = argv[i];
+                else if (arg == "--suppress")
+                    options.suppressions.emplace_back(argv[i]);
+                else if (arg == "--suppression-file")
+                    options.suppression_file = argv[i];
             } else if (arg.starts_with('-'))
                 throw std::runtime_error("Unknown option: " + arg);
             else if (!have_old) {
