@@ -149,6 +149,7 @@ std::string sarif(const Report& r) {
                              {"ABI005", "SignatureOrLayoutChanged"},
                              {"ABI006", "IncompleteTypeCoverage"},
                              {"ABI007", "CoverageRequiresReview"},
+                             {"ABI008", "DependencyOrSonameChanged"},
                              {"ELF001", "ElfFormatWarning"},
                              {"ELF002", "DwarfInterfaceNotice"},
                              {"SEC001", "SecurityFeatureAlert"},

@@ -40,6 +40,8 @@ Current rules:
   incomplete type information.
 - **ABI007 — CoverageRequiresReview:** an input-wide coverage warning or missing
   interface description requires review.
+- **ABI008 — DependencyOrSonameChanged:** library SONAME / install_name or direct
+  shared library dependencies changed.
 
 Decision precedence is error → `break`, otherwise warning → `review`, otherwise
 `pass`. There is no consumer-specific override in this release.

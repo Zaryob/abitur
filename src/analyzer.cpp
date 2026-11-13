@@ -53,6 +53,8 @@ struct Graph {
 struct Corpus {
     bool archive = false;
     std::string target;
+    std::string soname;
+    std::vector<std::string> needed_libraries;
     std::set<std::string> exports;
     std::map<std::string, std::string> symbols;
     std::set<std::string> producers;
@@ -628,6 +630,21 @@ void read_macho_object(const MachOObjectFile& macho, Corpus& corpus, bool allow_
         }
     }
 
+    for (const auto& L : macho.load_commands()) {
+        if (L.C.cmd == MachO::LC_ID_DYLIB) {
+            auto dylib_cmd = macho.getDylibIDLoadCommand(L);
+            if (dylib_cmd.dylib.name < L.C.cmdsize) {
+                corpus.soname = L.Ptr + dylib_cmd.dylib.name;
+            }
+        } else if (L.C.cmd == MachO::LC_LOAD_DYLIB || L.C.cmd == MachO::LC_LOAD_WEAK_DYLIB ||
+                   L.C.cmd == MachO::LC_REEXPORT_DYLIB) {
+            auto dylib_cmd = macho.getDylibIDLoadCommand(L);
+            if (dylib_cmd.dylib.name < L.C.cmdsize) {
+                corpus.needed_libraries.push_back(L.Ptr + dylib_cmd.dylib.name);
+            }
+        }
+    }
+
     const ObjectFile* debug_obj = &macho;
     std::optional<OwningBinary<Binary>> dsym_holder;
     if (!has_embedded_dwarf) {
@@ -683,6 +700,50 @@ void read_macho_object(const MachOObjectFile& macho, Corpus& corpus, bool allow_
     corpus.graphs.push_back(std::move(graph));
 }
 
+template <class ELFT>
+void extract_elf_dynamic_impl(const ELFObjectFile<ELFT>& elf_obj, std::string& soname,
+                              std::vector<std::string>& needed) {
+    const auto& ef = elf_obj.getELFFile();
+    StringRef dynstr;
+    for (const auto& sec : elf_obj.sections()) {
+        if (auto n = sec.getName()) {
+            if (*n == ".dynstr") {
+                if (auto c = sec.getContents())
+                    dynstr = *c;
+            }
+        }
+    }
+    auto get_dyn_string = [&](uint64_t offset) -> std::string {
+        if (offset < dynstr.size())
+            return std::string(dynstr.data() + offset);
+        return "";
+    };
+    auto dyn_entries = ef.dynamicEntries();
+    if (dyn_entries) {
+        for (const auto& dyn : *dyn_entries) {
+            if (dyn.d_tag == ELF::DT_SONAME) {
+                soname = get_dyn_string(dyn.d_un.d_val);
+            } else if (dyn.d_tag == ELF::DT_NEEDED) {
+                auto name = get_dyn_string(dyn.d_un.d_val);
+                if (!name.empty())
+                    needed.push_back(name);
+            }
+        }
+    }
+}
+
+void extract_elf_dynamic(const ELFObjectFileBase& elf, std::string& soname,
+                         std::vector<std::string>& needed) {
+    if (auto* obj = dyn_cast<ELF64LEObjectFile>(&elf))
+        extract_elf_dynamic_impl(*obj, soname, needed);
+    else if (auto* obj = dyn_cast<ELF32LEObjectFile>(&elf))
+        extract_elf_dynamic_impl(*obj, soname, needed);
+    else if (auto* obj = dyn_cast<ELF64BEObjectFile>(&elf))
+        extract_elf_dynamic_impl(*obj, soname, needed);
+    else if (auto* obj = dyn_cast<ELF32BEObjectFile>(&elf))
+        extract_elf_dynamic_impl(*obj, soname, needed);
+}
+
 void read_object(const ObjectFile& object, Corpus& corpus, bool allow_exec = false,
                  const std::filesystem::path& origin_path = {}) {
     if (auto* elf = dyn_cast<ELFObjectFileBase>(&object)) {
@@ -694,6 +755,8 @@ void read_object(const ObjectFile& object, Corpus& corpus, bool allow_exec = fal
             corpus.target = architecture;
         else if (corpus.target != architecture)
             fail("Mixed target architectures in archive");
+        if (!corpus.archive)
+            extract_elf_dynamic(*elf, corpus.soname, corpus.needed_libraries);
         bool debug = false;
         for (auto section : object.sections()) {
             auto n = checked(section.getName());
@@ -1446,7 +1509,7 @@ Report compare(const Options& options) {
                    "dependencies, inlined code and copy relocations are not resolved.",
                    "C++ inheritance/vtables, symbol versions and compiler-specific ABI extensions "
                    "are outside the analyzed scope and require separate review.",
-                   "SONAME, dependency resolution, loader search paths, exception/RTTI "
+                   "Dynamic loader search paths, symbol interposition, exception/RTTI "
                    "interoperability and runtime behavior are not verified.",
                    "Use matching compiler/target settings and embedded, complete DWARF; "
                    "optimized/LTO debug information can omit ABI details."},
@@ -1458,6 +1521,45 @@ Report compare(const Options& options) {
                                    "Target architecture/ELF ABI changed",
                                    {old.target + " -> " + now.target},
                                    {}});
+    if (!old.archive && !now.archive) {
+        if (!old.soname.empty() && !now.soname.empty() && old.soname != now.soname) {
+            result.findings.push_back({"ABI008",
+                                       "error",
+                                       "",
+                                       "Library SONAME / install_name changed",
+                                       {old.soname + " -> " + now.soname},
+                                       {}});
+        } else if (!old.soname.empty() && now.soname.empty()) {
+            result.findings.push_back({"ABI008",
+                                       "error",
+                                       "",
+                                       "Library SONAME / install_name removed",
+                                       {"Previous: " + old.soname},
+                                       {}});
+        }
+        std::set<std::string> old_deps(old.needed_libraries.begin(), old.needed_libraries.end());
+        std::set<std::string> now_deps(now.needed_libraries.begin(), now.needed_libraries.end());
+        for (const auto& dep : old_deps) {
+            if (!now_deps.contains(dep)) {
+                result.findings.push_back({"ABI008",
+                                           "warning",
+                                           "",
+                                           "Direct shared library dependency removed",
+                                           {dep},
+                                           {}});
+            }
+        }
+        for (const auto& dep : now_deps) {
+            if (!old_deps.contains(dep)) {
+                result.findings.push_back({"ABI008",
+                                           "note",
+                                           "",
+                                           "Direct shared library dependency added",
+                                           {dep},
+                                           {}});
+            }
+        }
+    }
     for (const auto& symbol : old.exports) {
         if (!now.exports.contains(symbol))
             result.findings.push_back({"ABI002",

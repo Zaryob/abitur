@@ -47,7 +47,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix="abitur-test-") as directory:
         root = Path(directory)
 
-        def fixture(label, source, debug=True, flags=()):
+        def fixture(label, source, debug=True, flags=(), soname="libexample.so"):
             folder = root / label
             folder.mkdir()
             cpp, obj = folder / "api.cpp", folder / "api.o"
@@ -56,9 +56,9 @@ def main():
             archive, shared = folder / "libexample.a", folder / "libexample.so"
             run([ar, "rcs", archive, obj])
             if cross:
-                run([linker, "-flavor", "gnu", "-shared", "-soname", "libexample.so", "-o", shared, obj], env=link_env)
+                run([linker, "-flavor", "gnu", "-shared", "-soname", soname, "-o", shared, obj], env=link_env)
             else:
-                run([cxx, "-shared", "-Wl,-soname,libexample.so", obj, "-o", shared])
+                run([cxx, "-shared", f"-Wl,-soname,{soname}", obj, "-o", shared])
             return shared, archive
 
         def compare(old, new, expected, *options):
@@ -97,6 +97,11 @@ def main():
             report = compare(old[kind], signature[kind], 1)
             assert any("return.size: 4 -> 8" in e for f in report["findings"] for e in f["evidence"]), report
             assert "DWARF" in compare(no_debug[kind], old[kind], 2)
+
+        # SONAME change detection (ABI008)
+        soname_changed = fixture("soname-changed", baseline, soname="libexample.so.2")
+        report = compare(old[0], soname_changed[0], 1)
+        assert any(f["rule_id"] == "ABI008" and "SONAME" in f["message"] for f in report["findings"])
 
         # Single-binary ELF analysis without candidate
         single_rep = analyze_single(old[0], 0)
