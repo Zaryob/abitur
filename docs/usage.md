@@ -2,28 +2,40 @@
 
 ## Prepare inputs
 
-Compile both library versions with complete, embedded DWARF information, normally
-using `-g`. Use comparable compiler, target, visibility, optimization, and ABI
-settings. Separate debug files and split DWARF are not supported.
+Compile library versions with complete DWARF information, normally using `-g`.
+On macOS, debug symbols are typically placed in `.dSYM` companion bundles
+produced by `dsymutil`, which Abitur locates automatically. Use comparable
+compiler, target, visibility, optimization, and ABI settings. Split DWARF
+(`.dwo`/`.dwp`) is not currently supported.
 
-Inputs are read as files. Abitur does not load libraries with the dynamic loader
-and does not execute the analyzed library or consumer. Resource limits for
-hostile or unusually large inputs have not been established.
+Inputs are read directly from files. Abitur does not execute the analyzed
+library or consumer, nor does it load libraries through dynamic system loaders.
 
 ## Command-line interface
 
 ```text
+# Single binary analysis (ELF & Mach-O metadata, sections, struct layouts)
+abitur TARGET [.so|.dylib|.a] [--format text|json|sarif] [--output PATH]
+
+# Binary ABI comparison (shared libraries or archives)
 abitur OLD.so NEW.so [--consumer APP]... [--format text|json|sarif] [--output PATH]
+abitur OLD.dylib NEW.dylib [--consumer APP]... [--format text|json|sarif] [--output PATH]
 abitur OLD.a NEW.a [--format text|json|sarif] [--output PATH]
+
+# Utility options
 abitur --help
 abitur --version
 abitur --license
 ```
 
-`OLD` is the baseline and `NEW` is the proposed replacement. Compare inputs of
-the same kind. Archive members are matched through their exported symbols,
-rather than member filenames. Archives must contain relocatable ELF members
-with embedded DWARF.
+When run with a single target, Abitur enters standalone inspection mode,
+extracting binary headers, segment maps, exported and imported symbols,
+security attributes (PIE, stack canary, NX, etc.), and struct memory layouts.
+
+When run with two targets, `OLD` serves as the baseline and `NEW` as the proposed
+replacement. Compare inputs of the same kind. Archive members are matched
+through their exported symbols rather than member filenames. Archives must
+contain relocatable ELF or Mach-O members.
 
 `--consumer` may be repeated for executable or shared-library ELF consumers with
 the same target as the baseline. Only direct undefined dynamic symbols matching

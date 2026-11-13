@@ -39,15 +39,16 @@ optimization, LTO, generated code, or incomplete compilation units.
 
 ## Inputs
 
-- Libraries must be shared ELF objects or regular archives containing
-  relocatable ELF objects.
-- Embedded DWARF is required in each inspected object. Stripped, split-debug,
-  BTF-only, and CTF-only inputs are unsupported.
+- Libraries must be shared ELF / Mach-O objects (`.so`, `.dylib`), static archives
+  containing relocatable objects (`.a`), or macOS Universal / Fat binaries.
+- Embedded DWARF or a resolvable `.dSYM` bundle (on macOS) is required for full
+  type and layout comparison. Stripped objects without debug symbols, split-debug
+  (`.dwo`/`.dwp`), BTF-only, and CTF-only inputs are unsupported.
 - Thin archives, mixed input kinds, and archives containing unsupported members
   are rejected.
 - Target changes are reported, but no cross-target ABI equivalence analysis is
   performed.
-- Mach-O and PE/COFF analysis are not implemented.
+- PE/COFF (Windows DLL/LIB) analysis is not yet implemented.
 
 ## Consumer evidence
 

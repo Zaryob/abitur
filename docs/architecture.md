@@ -3,27 +3,34 @@
 The CLI and desktop application share the same analyzer and report models:
 
 ```text
-Baseline ELF/archive + candidate ELF/archive
+Target ELF/Mach-O binary  [+ Optional candidate binary]
                     |
-          LLVM Object + DWARF readers
+      LLVM Object / Archive + DWARF readers
                     |
-           ABI graph per object
+     +--------------+---------------+
+     |                              |
+[Single Analysis]             [Comparison]
+     |                              |
+Binary header/sections/layout   ABI graph per object
+     |                              |
+Security & struct layouts      Export & structural diffs
+     |                              |
+     |                         Consumer import analysis
+     \                              /
+      +-------------+--------------+
                     |
-        Export and structural comparisons
-                    |
-       Direct consumer import associations
-                    |
-           Shared report model
+            Shared report model
               /           \
       CLI / JSON / SARIF    ImGui desktop
 ```
 
 ## Analyzer
 
-`src/analyzer.cpp` reads object files and regular archive members using LLVM.
-DWARF relocations are processed by LLVM, including those in relocatable archive
-members. The graph builder reserves node identities before following references
-so recursive types can be represented.
+`src/analyzer.cpp` reads ELF and Mach-O object files, universal binaries, and
+archives using LLVM. On macOS, if embedded DWARF is missing, it automatically
+resolves companion `.dSYM` directories. DWARF relocations are processed by LLVM,
+including those in relocatable archive members. The graph builder reserves node
+identities before following references so recursive types can be represented.
 
 Exported function and variable symbols form graph roots. Type nodes store a kind,
 structural properties, labeled edges, and unresolved coverage reasons. Typedef

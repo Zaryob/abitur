@@ -1,8 +1,9 @@
 # Abitur
 
-Abitur compares the exported interfaces of Linux ELF libraries and reports
-structural ABI differences. It provides a command-line interface for automated
-checks and a Dear ImGui desktop interface for inspecting findings.
+Abitur analyzes and compares the exported interfaces of Linux ELF and macOS
+Mach-O binaries, reporting structural ABI differences and detailed binary
+metadata. It provides a command-line interface for automated checks and CI/CD
+pipelines, as well as a Dear ImGui desktop application for inspecting findings.
 
 **Status:** experimental, version 0.1.0. A successful comparison means that no
 differences were found in the supported ABI surface. It does not establish that
@@ -10,14 +11,19 @@ an existing application will run correctly with a replacement library.
 
 ## Capabilities
 
-- Compare two shared ELF libraries (`.so`) or two regular archives (`.a`) with
-  embedded DWARF information.
-- Report removed and added exports, changed symbol properties, function
-  signatures, and reachable record, array, and bitfield layouts.
-- Associate findings with a consumer's direct dynamic imports.
-- Export text, JSON, and SARIF 2.1.0 reports with structural evidence.
-- Inspect findings in a desktop application with shared window controls and an
-  embedded monospace font.
+- **Binary Comparison:** Compare two shared libraries (`.so`, `.dylib`) or static
+  archives (`.a`, Universal/Fat binaries) with embedded DWARF or `.dSYM` bundles.
+- **Standalone Binary Inspection:** Inspect single ELF or Mach-O binaries to view
+  headers, segments, sections, symbol tables, security features, and struct memory
+  layouts with padding detection.
+- **Structural ABI Diff:** Report removed/added exports, changed symbol properties,
+  function signatures, and reachable record, array, and bitfield layouts.
+- **Consumer Impact:** Associate findings with an executable consumer's direct
+  dynamic imports.
+- **Multiple Report Formats:** Export text, JSON, and SARIF 2.1.0 reports with
+  structural evidence paths.
+- **Modern Desktop GUI:** Inspect findings, segment graphs, and struct memory layouts
+  in a native-feeling desktop interface with multi-tab analysis and dark theme.
 
 Static archive comparison concerns **relinking**. Replacing a `.a` file does not
 update an executable that already contains its code. Consumer import analysis
@@ -80,10 +86,10 @@ The generated consumer is inspected and is not executed.
 
 The current analyzer does not fully implement the C++ ABI. Inheritance, virtual
 tables, special member functions, exported symbol versions, and unsupported or
-incomplete type information require review. SONAME resolution, indirect consumer
-use, runtime behavior, and exception/RTTI interoperability are not checked.
-Stripped and split debug information, thin archives, Mach-O, and PE/COFF inputs
-are not supported. See [analysis limitations](docs/limitations.md).
+incomplete type information require review. SONAME resolution, indirect consumer use, runtime behavior, and exception/RTTI
+interoperability are not checked. Stripped and split debug information, thin
+archives, and PE/COFF inputs are not supported. Mach-O supports automatic `.dSYM`
+companion lookup. See [analysis limitations](docs/limitations.md).
 
 The desktop layer is shared across Windows, macOS, and Linux. Host platform
 support does not imply support for that platform's native binary format.
