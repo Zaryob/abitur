@@ -15,8 +15,8 @@ struct WindowOptions {
     int min_width = 960, min_height = 640;
 };
 struct ChromeState {
-    std::string activity = "Ready to compare";
-    std::string detail = "ELF / DWARF";
+    std::string activity = "Ready";
+    std::string detail = "ELF / MACH-O";
     bool busy = false;
 };
 

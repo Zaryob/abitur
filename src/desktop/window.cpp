@@ -491,7 +491,7 @@ Rect Window::draw_chrome(const ChromeState& state) {
 
     draw->AddText({brand_x + 28, 15}, ImGui::GetColorU32(ImGuiCol_Text), "ABITUR");
     draw->AddText({brand_x + 88, 15}, ImGui::GetColorU32(muted), "|");
-    draw->AddText({brand_x + 100, 15}, ImGui::GetColorU32(muted), "ELF Analyzer & ABI Workbench");
+    draw->AddText({brand_x + 100, 15}, ImGui::GetColorU32(muted), "ELF / Mach-O ABI Workbench");
 
     if (!state.detail.empty()) {
         auto tag_text = state.detail.c_str();
